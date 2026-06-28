@@ -1,0 +1,113 @@
+name: Deploy to Cloud Run
+
+# Trigger: run this workflow whenever code is pushed to the main branch.
+on:
+  push:
+    branches: [main]
+
+# Shared values used across multiple steps below, defined once here so
+# there's a single place to change region/repo name instead of hunting
+# through every step.
+env:
+  REGION: northamerica-northeast1
+  REPOSITORY: contacts-app
+  AR_HOST: northamerica-northeast1-docker.pkg.dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: copy your repo's code onto this temporary runner machine.
+      # Without this, the runner is an empty Linux box with nothing to build.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: authenticate this runner as the GitHub Actions service
+      # account, using the key stored in the GCP_SA_KEY secret.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # Step 3: install the gcloud CLI on the runner (it isn't there by
+      # default), so later steps can call gcloud and configure Docker auth.
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # Step 4: let Docker push images to Artifact Registry using the
+      # credentials from step 2 — same mechanic as the manual push you did
+      # earlier by hand, just running on GitHub's machine instead of yours.
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.AR_HOST }} --quiet
+
+      # Step 5: build and push the API image.
+      # The tag uses the commit SHA so every deploy is traceable to an exact
+      # commit, and "latest" is also pushed for convenience.
+      - name: Build and push API image
+        run: |
+          IMAGE="${{ env.AR_HOST }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/api"
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" ./server
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      # Step 6: deploy the API image to Cloud Run.
+      # This creates the service on first run, or updates it on every
+      # subsequent run — same command either way.
+      - name: Deploy API to Cloud Run
+        id: deploy-api
+        run: |
+          gcloud run deploy contacts-api \
+            --image="${{ env.AR_HOST }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/api:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --set-env-vars="DB_DRIVER=sqlite,SQLITE_PATH=/app/data/contacts.db,CORS_ORIGIN=*" \
+            --quiet
+
+      # Step 7: read back the API's public URL so the client build (next
+      # step) can be told exactly where to send its requests.
+      - name: Get API URL
+        id: api-url
+        run: |
+          URL=$(gcloud run services describe contacts-api \
+            --region="${{ env.REGION }}" \
+            --format="value(status.url)")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      # Step 8: build and push the client image. The API's URL gets baked
+      # into the compiled React bundle here via the build arg — this is
+      # why the client must be built AFTER the API's URL is known.
+      - name: Build and push client image
+        run: |
+          IMAGE="${{ env.AR_HOST }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/client"
+          docker build \
+            --build-arg VITE_API_BASE_URL="${{ steps.api-url.outputs.url }}/api" \
+            -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" \
+            ./client
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      # Step 9: deploy the client image to Cloud Run.
+      - name: Deploy client to Cloud Run
+        run: |
+          gcloud run deploy contacts-client \
+            --image="${{ env.AR_HOST }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/client:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --quiet
+
+      # Step 10: print both URLs at the end of the run, so you don't have
+      # to dig through gcloud or the console to find them after a deploy.
+      - name: Show deployed URLs
+        run: |
+          CLIENT_URL=$(gcloud run services describe contacts-client \
+            --region="${{ env.REGION }}" \
+            --format="value(status.url)")
+          echo "API:    ${{ steps.api-url.outputs.url }}"
+          echo "Client: $CLIENT_URL"
