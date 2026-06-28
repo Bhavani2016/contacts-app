@@ -1,0 +1,66 @@
+services:
+  # --- API service ---
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: contacts-api:local
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      NODE_ENV: development
+      CORS_ORIGIN: "*"
+      # Switch these two lines to point at Postgres instead of SQLite:
+      DB_DRIVER: sqlite
+      SQLITE_PATH: /app/data/contacts.db
+      # DB_DRIVER: postgres
+      # DATABASE_URL: postgresql://contacts:contacts@db:5432/contacts
+    volumes:
+      # Named volume so the SQLite file survives `docker compose down` and
+      # container restarts, instead of living only inside the container's
+      # writable layer (which is destroyed when the container is removed).
+      - api-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/healthz', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  # --- Client (UI) service ---
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # Browser-side code can't reach "api" (a Docker-internal hostname),
+        # so the client must be built to call the API's host-mapped port.
+        VITE_API_BASE_URL: http://localhost:8080/api
+    image: contacts-client:local
+    ports:
+      - "5173:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # --- Optional managed-style Postgres, for testing the production DB path locally ---
+  db:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: contacts
+      POSTGRES_PASSWORD: contacts
+      POSTGRES_DB: contacts
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contacts"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  api-data:

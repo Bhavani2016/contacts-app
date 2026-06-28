@@ -1,0 +1,42 @@
+cat > .gitignore << 'EOF'
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build output
+dist/
+*/dist/
+build/
+
+# Environment files (never commit secrets)
+.env
+.env.*
+!.env.example
+!*/.env.example
+
+# Service account keys (never commit cloud credentials)
+*-key.json
+github-actions-key.json
+*.pem
+
+# Local databases
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Test artifacts
+server/test/test-data/
+EOF
