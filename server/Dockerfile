@@ -27,6 +27,6 @@ USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD node -e "require('http').get('http://localhost:8080/healthz', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"
+  CMD node -e "require('http').get('http://localhost:8080/api/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"
 
 CMD ["sh", "-c", "node --no-warnings src/db/migrate.js && node --no-warnings src/index.js"]

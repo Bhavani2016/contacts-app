@@ -15,7 +15,7 @@ function createApp() {
   app.use(morgan(config.env === 'production' ? 'combined' : 'dev'));
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/healthz', (req, res) => {
+  app.get('/api/health', (req, res) => {
     res.status(200).json({ status: 'ok', driver: config.dbDriver, env: config.env });
   });
 
