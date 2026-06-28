@@ -53,9 +53,28 @@ jobs:
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
+      # Step 5b: Cloud Run cannot read GitHub secrets at runtime — GitHub
+      # secrets only exist during this workflow run, on GitHub's machine.
+      # For the running container to access DATABASE_URL, it has to live in
+      # Google Secret Manager instead. This step creates or updates that
+      # secret from the GitHub secret, every run, so the two stay in sync.
+      - name: Sync DATABASE_URL to Secret Manager
+        run: |
+          if gcloud secrets describe DATABASE_URL >/dev/null 2>&1; then
+            printf '%s' "${{ secrets.DATABASE_URL }}" | gcloud secrets versions add DATABASE_URL --data-file=-
+          else
+            printf '%s' "${{ secrets.DATABASE_URL }}" | gcloud secrets create DATABASE_URL --data-file=- --replication-policy=automatic
+          fi
+
       # Step 6: deploy the API image to Cloud Run.
       # This creates the service on first run, or updates it on every
       # subsequent run — same command either way.
+      #
+      # --add-cloudsql-instances tells Cloud Run to open a secure Unix
+      # socket to this specific Cloud SQL instance inside the container at
+      # runtime — the database itself has no public IP at all. DATABASE_URL
+      # is injected as a secret, never written into the workflow file or
+      # logs in plain text.
       - name: Deploy API to Cloud Run
         id: deploy-api
         run: |
@@ -65,7 +84,9 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --port=8080 \
-            --set-env-vars="DB_DRIVER=sqlite,SQLITE_PATH=/app/data/contacts.db,CORS_ORIGIN=*" \
+            --add-cloudsql-instances="${{ secrets.CLOUDSQL_CONNECTION_NAME }}" \
+            --set-env-vars="DB_DRIVER=postgres,CORS_ORIGIN=*" \
+            --set-secrets="DATABASE_URL=DATABASE_URL:latest" \
             --quiet
 
       # Step 7: read back the API's public URL so the client build (next
