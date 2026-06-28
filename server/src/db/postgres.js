@@ -8,15 +8,21 @@ function getPool() {
   if (!config.databaseUrl) {
     throw new Error('DATABASE_URL must be set when DB_DRIVER=postgres');
   }
-  pool = new Pool({
-    connectionString: config.databaseUrl,
-    // Most managed Postgres offerings (Azure, RDS, Cloud SQL) require SSL.
-    // rejectUnauthorized:false keeps this simple for managed CA chains;
-    // tighten this with a CA bundle for stricter environments.
-    ssl: config.databaseUrl.includes('sslmode=disable')
+ // Cloud SQL connections via the /cloudsql/... Unix socket are already
+// secured by Google's infrastructure (the socket itself never leaves the
+// host), and Postgres refuses SSL negotiation on that socket type
+// entirely — so SSL must be off for those. For a normal network
+// connection (a public host:port, e.g. RDS, Azure, a self-hosted box),
+// SSL stays on by default, since that traffic genuinely goes over the
+// network and benefits from encryption.
+const isCloudSqlSocket = config.databaseUrl.includes('/cloudsql/');
+pool = new Pool({
+  connectionString: config.databaseUrl,
+  ssl:
+    isCloudSqlSocket || config.databaseUrl.includes('sslmode=disable')
       ? false
       : { rejectUnauthorized: false },
-  });
+});
   return pool;
 }
 
