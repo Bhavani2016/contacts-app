@@ -23,6 +23,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Step 1b: install the API's dependencies and run its test suite
+      # BEFORE any GCP auth or Docker build happens. If a test fails, the
+      # job stops here — nothing gets built, pushed, or deployed. This is
+      # the actual quality gate: a broken commit cannot reach production
+      # by itself, regardless of whether anyone remembered to test locally
+      # first.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install server dependencies
+        working-directory: ./server
+        run: npm ci
+
+      - name: Run server tests
+        working-directory: ./server
+        run: npm test
+
       # Step 2: authenticate this runner as the GitHub Actions service
       # account, using the key stored in the GCP_SA_KEY secret.
       - name: Authenticate to Google Cloud
